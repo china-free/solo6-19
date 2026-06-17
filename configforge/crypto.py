@@ -58,7 +58,7 @@ def decrypt_value(encrypted_value: str, master_key: str) -> str:
 def encrypt_dict(data: dict, master_key: str, sensitive_keys: list = None) -> dict:
     result = {}
     sensitive_keys = [k.lower() for k in (sensitive_keys or [])]
-    
+
     def _is_sensitive(key: str) -> bool:
         key_lower = key.lower()
         if not sensitive_keys:
@@ -67,7 +67,7 @@ def encrypt_dict(data: dict, master_key: str, sensitive_keys: list = None) -> di
                 "credential", "auth", "passwd", "pwd"
             ])
         return any(s in key_lower for s in sensitive_keys)
-    
+
     def _encrypt_recursive(obj, path: str = ""):
         if isinstance(obj, dict):
             return {k: _encrypt_recursive(v, f"{path}.{k}" if path else k) for k, v in obj.items()}
@@ -77,8 +77,98 @@ def encrypt_dict(data: dict, master_key: str, sensitive_keys: list = None) -> di
             return encrypt_value(obj, master_key)
         else:
             return obj
-    
+
     return _encrypt_recursive(data)
+
+
+DEFAULT_SENSITIVE_PATTERNS = [
+    "password", "secret", "token", "key", "private",
+    "credential", "auth", "passwd", "pwd"
+]
+
+
+def is_sensitive_key(key: str, sensitive_keys: list = None) -> bool:
+    key_lower = key.lower()
+    patterns = [p.lower() for p in (sensitive_keys or DEFAULT_SENSITIVE_PATTERNS)]
+    return any(s in key_lower for s in patterns)
+
+
+def mask_value(value: str, mode: str = "partial", mask_char: str = "*") -> str:
+    if not isinstance(value, str) or not value:
+        return value
+
+    if mode == "full":
+        return mask_char * 8
+
+    if mode == "none":
+        return value
+
+    length = len(value)
+
+    if length <= 4:
+        return mask_char * length
+
+    if length <= 8:
+        return value[0] + mask_char * (length - 2) + value[-1]
+
+    if mode == "last4":
+        visible = 4
+        return mask_char * (length - visible) + value[-visible:]
+
+    if mode == "first4_last4":
+        return value[:4] + mask_char * (length - 8) + value[-4:]
+
+    return value[:2] + mask_char * (length - 4) + value[-2:]
+
+
+def mask_dict(
+    data: dict,
+    mask_mode: str = "partial",
+    mask_encrypted: bool = True,
+    sensitive_keys: list = None,
+) -> dict:
+    def _is_sensitive_path(path: str) -> bool:
+        return is_sensitive_key(path.split(".")[-1], sensitive_keys)
+
+    def _mask_recursive(obj, path: str = ""):
+        if isinstance(obj, dict):
+            return {k: _mask_recursive(v, f"{path}.{k}" if path else k) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [_mask_recursive(item, f"{path}[{i}]") for i, item in enumerate(obj)]
+        elif isinstance(obj, str):
+            if is_encrypted(obj):
+                if mask_encrypted:
+                    return mask_value(obj, mask_mode)
+                return obj
+            if _is_sensitive_path(path):
+                return mask_value(obj, mask_mode)
+            return obj
+        else:
+            return obj
+
+    return _mask_recursive(data)
+
+
+def collect_sensitive_fields(
+    data: dict,
+    sensitive_keys: list = None,
+) -> list:
+    fields = []
+
+    def _collect(obj, path: str = ""):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                child_path = f"{path}.{k}" if path else k
+                _collect(v, child_path)
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                _collect(item, f"{path}[{i}]")
+        elif isinstance(obj, str):
+            if is_encrypted(obj) or is_sensitive_key(path.split(".")[-1], sensitive_keys):
+                fields.append(path)
+
+    _collect(data)
+    return fields
 
 
 def decrypt_dict(data: dict, master_key: str) -> dict:

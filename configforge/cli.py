@@ -16,7 +16,8 @@ from .template import TemplateManager, load_config_file, save_config_file
 from .environment import EnvironmentManager
 from .crypto import (
     generate_master_key, encrypt_value, decrypt_value,
-    encrypt_dict, decrypt_dict, get_master_key, is_encrypted
+    encrypt_dict, decrypt_dict, get_master_key, is_encrypted,
+    mask_dict, mask_value, collect_sensitive_fields, is_sensitive_key
 )
 from .env_subst import load_env_file, substitute_env_variables
 from .builder import ConfigBuilder
@@ -472,6 +473,211 @@ def build_all(cli_obj, template, decrypt, no_encrypt):
                 console.print(f"  [green]✓[/green] {f}")
             else:
                 console.print(f"  [red]✗ {f}[/red]")
+
+
+@build.command("preview")
+@click.argument("template")
+@click.argument("environment")
+@click.option(
+    "--mode", "-m",
+    type=click.Choice(["mask", "encrypt", "decrypt", "plain"], case_sensitive=False),
+    default="mask",
+    help="显示模式：mask(脱敏，默认) | encrypt(加密后) | decrypt(解密后明文，危险) | plain(原构建结果不加密)",
+)
+@click.option(
+    "--mask-mode",
+    type=click.Choice(["partial", "full", "last4", "first4_last4", "none"], case_sensitive=False),
+    default="partial",
+    help="脱敏方式：partial(前后2位可见) | full(全掩) | last4(仅后4位) | first4_last4(前后4位)",
+)
+@click.option(
+    "--format", "-f", "output_format",
+    type=click.Choice(["yaml", "json", "tree"], case_sensitive=False),
+    default="yaml",
+    help="输出格式：yaml(默认) | json | tree",
+)
+@click.option("--show-meta", is_flag=True, default=True, help="显示元信息(处理步骤、敏感字段统计)")
+@click.option("--no-meta", is_flag=True, help="不显示元信息")
+@click.option("--line-number/--no-line-number", default=True, help="显示行号")
+@click.option("--yes-decrypt", is_flag=True, help="跳过 decrypt 模式的二次确认")
+@pass_cli
+def build_preview(
+    cli_obj, template, environment, mode, mask_mode, output_format,
+    show_meta, no_meta, line_number, yes_decrypt,
+):
+    """预览指定模板在某个环境下最终渲染的结果
+
+    \b
+    显示模式说明:
+      mask     - 默认，敏感字段全部脱敏，安全地在终端查看
+      encrypt  - 按最终加密状态显示（ENC:gAAA...）
+      decrypt  - 解密后显示真实值（需二次确认，切勿在公共终端使用）
+      plain    - 不做加密也不解密，按中间构建结果显示
+    """
+    display_meta = show_meta and not no_meta
+
+    if mode == "decrypt" and not yes_decrypt:
+        click.confirm(
+            "[warning]即将以明文形式显示包含可能敏感的字段，确认继续?",
+            abort=True,
+        )
+
+    build_encrypt = (mode == "encrypt")
+    build_decrypt = (mode == "decrypt" or mode == "mask")
+
+    try:
+        data = cli_obj.builder.build(
+            template_name=template,
+            env_name=environment,
+            decrypt=build_decrypt,
+            encrypt=build_encrypt,
+        )
+    except Exception as e:
+        console.print(f"[red]✗ 构建失败: {e}[/red]")
+        sys.exit(1)
+
+    meta = {
+        "template": template,
+        "environment": environment,
+        "display_mode": mode,
+        "mask_mode": mask_mode if mode == "mask" else "N/A",
+    }
+
+    if mode == "mask":
+        sensitive_count = len(collect_sensitive_fields(data))
+        meta["sensitive_fields"] = sensitive_count
+        data = mask_dict(data, mask_mode=mask_mode, mask_encrypted=False)
+    elif mode == "plain":
+        pass
+
+    sensitive_fields = collect_sensitive_fields(data)
+    meta["total_fields_total_sensitive_after_display"] = len(sensitive_fields)
+
+    if display_meta:
+        _render_preview_meta(meta)
+
+    _render_preview_content(data, output_format, line_number, mode)
+
+
+def _render_preview_meta(meta: dict):
+    table = Table(
+        title="构建预览 - 元信息",
+        show_header=False,
+        show_lines=False,
+        box=None,
+    )
+    table.add_column("项", style="cyan", width=22)
+    table.add_column("值")
+
+    mode_label = {
+        "mask": "mask  [yellow](脱敏，推荐日常查看)[/yellow]",
+        "encrypt": "encrypt  [dim](最终加密状态)[/dim]",
+        "decrypt": "decrypt  [red](明文显示，危险)[/red]",
+        "plain": "plain  [dim](不加密不解密)[/dim]",
+    }.get(meta["display_mode"], meta["display_mode"])
+
+    table.add_row("模板", meta["template"])
+    table.add_row("环境", meta["environment"])
+    table.add_row("显示模式", mode_label)
+    if meta["display_mode"] == "mask":
+        table.add_row("脱敏方式", meta["mask_mode"])
+    if "sensitive_fields" in meta:
+        table.add_row("脱敏字段数", str(meta["sensitive_fields"]))
+
+    console.print(table)
+    console.print()
+
+
+def _highlight_sensitive_lines(yaml_text: str, display_mode: str) -> str:
+    if display_mode != "mask":
+        return yaml_text
+
+    patterns = [
+        "password", "secret", "token", "key", "private",
+        "credential", "auth", "passwd", "pwd",
+    ]
+
+    highlighted = []
+    for line in yaml_text.splitlines():
+        stripped = line.lstrip()
+        colon_pos = stripped.find(":")
+        if colon_pos > 0:
+            key_part = stripped[:colon_pos].lower()
+            if any(p in key_part for p in patterns):
+                highlighted.append(f"[yellow]{line}[/yellow]")
+                continue
+        highlighted.append(line)
+    return "\n".join(highlighted)
+
+
+def _render_preview_content(data: dict, output_format: str, show_lineno: bool, display_mode: str):
+    if output_format == "yaml":
+        import yaml
+        raw = yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        if display_mode == "mask":
+            raw = _highlight_sensitive_lines(raw, display_mode)
+            syntax = Syntax(
+                raw, "yaml", theme="monokai", line_numbers=show_lineno,
+                background_color="default",
+            )
+        else:
+            syntax = Syntax(
+                raw, "yaml", theme="monokai", line_numbers=show_lineno,
+            )
+        console.print(Panel(syntax, title="配置内容", expand=False))
+
+    elif output_format == "json":
+        raw = json.dumps(data, indent=2, ensure_ascii=False)
+        syntax = Syntax(raw, "json", theme="monokai", line_numbers=show_lineno)
+        console.print(Panel(syntax, title="配置内容", expand=False))
+
+    elif output_format == "tree":
+        tree = Tree("配置根节点")
+        _build_rich_tree(data, tree, display_mode)
+        console.print(Panel(tree, title="配置内容", expand=False))
+
+
+def _build_rich_tree(data, parent_node, display_mode: str, key_name: str = ""):
+    patterns = [
+        "password", "secret", "token", "key", "private",
+        "credential", "auth", "passwd", "pwd",
+    ]
+
+    def _style_key(key: str, val) -> str:
+        key_lower = str(key).lower()
+        is_sensitive = any(p in key_lower for p in patterns) or is_encrypted(val)
+        style = "[yellow]" if (is_sensitive and display_mode == "mask") else "[cyan]"
+        return f"{style}{key}[/]"
+
+    if isinstance(data, dict):
+        for k, v in data.items():
+            styled_key = _style_key(k, v)
+            if isinstance(v, (dict, list)):
+                child = parent_node.add(styled_key)
+                _build_rich_tree(v, child, display_mode, k)
+            else:
+                parent_node.add(f"{styled_key}: {_format_scalar(v)}")
+    elif isinstance(data, list):
+        for i, item in enumerate(data):
+            list_key = f"[{i}]"
+            styled_key = f"[dim]{list_key}[/]"
+            if isinstance(item, (dict, list)):
+                child = parent_node.add(styled_key)
+                _build_rich_tree(item, child, display_mode)
+            else:
+                parent_node.add(f"{styled_key}: {_format_scalar(item)}")
+    else:
+        parent_node.add(str(data))
+
+
+def _format_scalar(val) -> str:
+    if isinstance(val, str):
+        if len(val) > 80:
+            return val[:77] + "..."
+        return val
+    if isinstance(val, bool):
+        return "[green]true[/]" if val else "[red]false[/]"
+    return str(val)
 
 
 @build.command("diff")
