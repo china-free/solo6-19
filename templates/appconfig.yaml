@@ -1,0 +1,30 @@
+app:
+  name: ${APP_NAME:myapp}
+  version: "1.0.0"
+  debug: false
+  log_level: info
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+database:
+  host: localhost
+  port: 5432
+  name: myapp
+  username: admin
+  password: changeme
+
+cache:
+  host: localhost
+  port: 6379
+  password: ""
+
+jwt:
+  secret: my-jwt-secret-key
+  expires_in: 3600
+
+features:
+  enable_api: true
+  enable_admin: false
+  enable_metrics: true

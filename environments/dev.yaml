@@ -1,0 +1,19 @@
+app:
+  name: MyApp Dev
+  debug: true
+  log_level: debug
+
+server:
+  port: 8081
+
+database:
+  host: dev-db.example.com
+  name: myapp_dev
+  username: dev_user
+  password: dev_password_123
+
+cache:
+  host: dev-cache.example.com
+
+jwt:
+  secret: dev-jwt-secret-change-me

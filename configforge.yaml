@@ -1,0 +1,6 @@
+templates_dir: templates
+environments_dir: environments
+output_dir: dist
+secrets_dir: .secrets
+env_file: .env
+master_key_env: CONFIGFORGE_MASTER_KEY

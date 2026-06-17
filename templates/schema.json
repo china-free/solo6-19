@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["app", "server", "database"],
+  "properties": {
+    "app": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "debug": { "type": "boolean" },
+        "log_level": { "type": "string", "enum": ["debug", "info", "warn", "error"] }
+      }
+    },
+    "server": {
+      "type": "object",
+      "required": ["host", "port"],
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["host", "port", "name", "username"],
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer" },
+        "name": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" }
+      }
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "enable_api": { "type": "boolean" },
+        "enable_admin": { "type": "boolean" },
+        "enable_metrics": { "type": "boolean" }
+      }
+    }
+  }
+}

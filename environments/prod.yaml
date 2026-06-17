@@ -1,0 +1,27 @@
+app:
+  name: ${APP_NAME:MyApp Production}
+  debug: false
+  log_level: warn
+
+server:
+  port: 80
+
+database:
+  host: ${DB_HOST:prod-db.example.com}
+  port: 5432
+  name: myapp_prod
+  username: ${DB_USER:prod_user}
+  password: ${DB_PASSWORD:prod_very_secure_password}
+
+cache:
+  host: prod-cache.example.com
+  password: prod_cache_secret_key
+
+jwt:
+  secret: prod-jwt-super-secret-key-1234567890
+  expires_in: 7200
+
+features:
+  enable_api: true
+  enable_admin: true
+  enable_metrics: true

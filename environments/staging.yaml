@@ -1,0 +1,23 @@
+app:
+  name: MyApp Staging
+  debug: false
+  log_level: info
+
+server:
+  port: 8080
+
+database:
+  host: staging-db.example.com
+  name: myapp_staging
+  username: staging_user
+  password: staging_secure_password
+
+cache:
+  host: staging-cache.example.com
+  password: staging_cache_secret
+
+jwt:
+  secret: staging-jwt-secret-key-0987654321
+
+features:
+  enable_admin: true
